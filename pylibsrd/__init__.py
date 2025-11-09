@@ -1,5 +1,5 @@
 """
-pylibSrd 1.3.3
+pyLibSrd 1.3.4
 ==================
 Sam Davis
 
@@ -27,7 +27,8 @@ Classes
 A custom TSV reading and writing table class, that can read, write and parse.  
 
 2. HtmlBuilder  
-A very nice html building class, that is used to programatically build html files.   
+
+A very nice html building class, that is used to programatically build html files.  
 """
 
 from pylibsrd.__version__ import __version__
@@ -40,6 +41,5 @@ from pylibsrd.table import Table
 
 
 def _script():
-
 	print(__doc__.replace("```", ""))
 

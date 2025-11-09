@@ -28,7 +28,7 @@ setup(
 			'pylibsrd = pylibsrd.__init__:_script',
 			'mergepdfs = pylibsrd.merge_pdf:_script',
 			'imgconvert = pylibsrd.image_convert:_script',
-            'markhtml = pylibsrd.markhtml:_script',
+            'markhtml = pylibsrd.markhtml:_MarkHTML_script',
             'pdfresize = pylibsrd.pdf_resizer:_script'
 		],
 	},

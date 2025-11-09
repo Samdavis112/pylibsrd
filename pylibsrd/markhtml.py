@@ -12,22 +12,14 @@ class Markdown:
         self.stylePath = stylePath
         self.path = path
         self.FileName_NoExt = os.path.splitext(os.path.basename(self.path))[0]
-
-        self.createTableOfContents = False
         self.Headings = [] # (level, text, id)
 
         with open(path, "r") as f:
             self.mdlines = f.readlines()
 
-    def GetHtml(self, createTableOfContents=False):
-        self.createTableOfContents = createTableOfContents
-        tokens = self.Tokenise()
-        preprocessedHtml = self.HtmlFromTokens(tokens)
-        regexHtml = self.convert_inline_formatting(preprocessedHtml)
-        return regexHtml
-    
-    def Tokenise(self):
+    def _Tokenise(self):
         tokens = []
+        possibleHeadingLevels = ("# ", "## ", "### ", "#### ", "##### ")
 
         for line in self.mdlines:
             line = line.removesuffix("\n")
@@ -50,10 +42,11 @@ class Markdown:
             elif line.startswith("|"): # Table row
                 tokens.append(("table", line))
 
-            elif line.startswith("#"):  # heading
+            elif line.startswith(possibleHeadingLevels):  # heading
                 level = len(line.split(" ")[0])
                 text = line[level:].strip()
                 headingId = text.replace(" ", "_")
+
                 
                 # Make the heading id unique
                 i = 0
@@ -75,39 +68,75 @@ class Markdown:
             if line.endswith("  "):
                 tokens.append("linebreak")
 
-        return tokens
+        return self._join_multiline_tokens(tokens)
+    
+    @staticmethod
+    def _join_multiline_tokens(tokens):
+        newTokenList = []
+        buffer = []
 
-    def HtmlFromTokens(self, tokens):
+        for token in tokens:
+            # Case 1: empty buffer, single line token
+            if len(buffer) == 0 and token[0] not in Markdown.MultiLineTokens:
+                newTokenList.append(token)
+
+            # Case 2: not empty buffer, single line token
+            elif len(buffer) > 0 and token[0] not in Markdown.MultiLineTokens:
+                newTokenList.append((buffer[0][0], buffer.copy()))
+                buffer.clear()
+                
+                newTokenList.append(token)
+
+            # Case 3: not empty buffer, new multiline token
+            elif len(buffer) > 0 and token[0] != buffer[0][0] and token[0] in Markdown.MultiLineTokens:
+                newTokenList.append((buffer[0][0], buffer.copy()))
+                buffer.clear()
+
+                buffer.append(token)
+
+            # Case 4: empty buffer or same token
+            else: 
+                buffer.append(token)
+
+        if len(buffer) > 0: # Make sure the buffer does not get forgotten if the last element is a multiline.
+            newTokenList.append((buffer[0][0], buffer.copy()))
+
+        return newTokenList
+
+    def GetHtml(self):
+        tokens = self._Tokenise()
+        preprocessedHtml = self._HTML_from_tokens(tokens)
+        regexHtml = self._HTML_convert_inline_formatting(preprocessedHtml)
+        return regexHtml
+    def _HTML_from_tokens(self, tokens):
         html = HtmlBuilder(self.FileName_NoExt)
         html.initaliseHtml(self.stylePath)
+        
+        # Sidebar styles
+        html.appendRawText('''<style>
+        #__toc_button__ {position: fixed;top: 15px;left: 15px;z-index: 1001; background: #fff;color: var(--text);border: 1px solid var(--text);border-radius: 5px;cursor: pointer;font-size: 20px;padding: 5px 10px;line-height: 1;transition: all 0.3s ease; width: auto;display: block;}
+        #__toc_button__:hover {background: var(--text);color: var(--background);}
+        #__toc__ {position: fixed;top: 0;left: 0;width: 280px; height: 100vh; background: #fff;border-right: 1px solid var(--text);z-index: 1000;overflow-y: auto; padding: 20px;padding-top: 70px; transform: translateX(-100%);transition: transform 0.3s ease-in-out;display: block !important;}
+        body.sidebar-open #__toc__ {transform: translateX(0);}
+        #__container__ {transition: margin-left 0.3s ease-in-out;}
+        .sidebar-overlay {position: fixed;top: 0;left: 0;width: 100%;height: 100%;background: rgba(0, 0, 0, 0.4);z-index: 999;opacity: 0;visibility: hidden;transition: opacity 0.3s ease, visibility 0.3s ease;}
+        body.sidebar-open .sidebar-overlay {opacity: 1;visibility: visible;}
+        @media (min-width: 992px) {body.sidebar-open #__toc_button__ {transform: translateX(280px);} body.sidebar-open .sidebar-overlay {opacity: 0;visibility: hidden;}}
+        @media (max-width: 991px) {#__toc__ {width: 250px;}}
+        body {max-width: 1000px; margin: 0 auto; padding: 20px; }                 
+        </style>''')
         html.ImportMathJax()
 
-        # Title bar
+        html.appendRawText('<button onclick="toc_click()" id="__toc_button__">&#9776;</button>')
+
         html.startDiv(id="__container__")
         html.appendRawText(f"\n<h1>{self.FileName_NoExt}</h1>\n")
-    
-        if self.createTableOfContents:
-            # Add a button to show and hide the TOC
-            html.appendRawText('<div onclick="toc_click()" id="__toc_button__" class="w3-block w3-button" style="background-color: #444; color:white; font-weight: bold;">Table of Contents</div>')
-            
-            # Add the TOC
-            html.appendRawText(self.GenerateTableOfContents())
+        html.appendRawText(self._HTML_generate_toc())
 
-            # Add the script to control the visibility
-            html.appendRawText("""<script>
-function toc_click() {
-    var x = document.getElementById('__toc__');
-    if (x.classList.contains("w3-hide")) {
-        x.classList.remove("w3-hide");
-    }
-    else {
-        x.classList.add("w3-hide");
-    }
-}
-</script>\n""")
+        # Add the script to control the visibility
+        html.appendRawText('''<div class="sidebar-overlay" onclick="toc_click()"></div>\n<script>function toc_click() {document.body.classList.toggle('sidebar-open');}</script>''')
+        html.startDiv(id="__container__")
             
-        tokens = self.JoinMultilineTokens(tokens)
-
         for token in tokens:
             if token[0] == "heading":
                 html.Heading(token[2], token[1], id=token[3])
@@ -173,56 +202,27 @@ function toc_click() {
         
         html.endDiv()
         return html.GetHtml()
-    
-    @staticmethod
-    def JoinMultilineTokens(tokens):
-        newTokenList = []
-        buffer = []
-
-        for token in tokens:
-            # Case 1: empty buffer, single line token
-            if len(buffer) == 0 and token[0] not in Markdown.MultiLineTokens:
-                newTokenList.append(token)
-
-            # Case 2: not empty buffer, single line token
-            elif len(buffer) > 0 and token[0] not in Markdown.MultiLineTokens:
-                newTokenList.append((buffer[0][0], buffer.copy()))
-                buffer.clear()
-                
-                newTokenList.append(token)
-
-            # Case 3: not empty buffer, new multiline token
-            elif len(buffer) > 0 and token[0] != buffer[0][0] and token[0] in Markdown.MultiLineTokens:
-                newTokenList.append((buffer[0][0], buffer.copy()))
-                buffer.clear()
-
-                buffer.append(token)
-
-            # Case 4: empty buffer or same token
-            else: 
-                buffer.append(token)
-
-        if len(buffer) > 0: # Make sure the buffer does not get forgotten if the last element is a multiline.
-            newTokenList.append((buffer[0][0], buffer.copy()))
-
-        return newTokenList
-
-    def convert_inline_formatting(self, text):
-        text = self.HandleLinksAndImages(text)
+    def _HTML_convert_inline_formatting(self, text):
+        # Links and images
+        text = re.sub(r"!\[\[(.*?)\]\]", rf'<br><img src="{self.imageFolderPath}\1" alt="\1"/><br>', text)
+        text = re.sub(r"(?<!\!)\[(.*?)\]\((.*?)\)", r'<a href="\2">\1</a>', text)
 
         # Handle Double-Dollar Maths FIRST
-        text, MathsBlocks = self.HandleBlockMaths(text)
-        text, InlineMaths = self.HandleInlineMaths(text)        
-        text = self.HandleBoldAndItallic(text)
+        text, MathsBlocks = self._HTML_handle_block_maths(text)
+        text, InlineMaths = self._HTML_handle_inline_maths(text)        
+        
+        # bold and italics
+        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"\*(.*?)\*", r"<i>\1</i>", text)
 
-        text = self.restoreBlockMaths(text, MathsBlocks)
-        text = self.restoreInlineMaths(text, InlineMaths)
-        text = self.HandleCodeBlocks(text)
+        text = self._HTML_restore_block_maths(text, MathsBlocks)
+        text = self._HTML_restore_inline_maths(text, InlineMaths)
+
+        # Handle Code Blocks
+        text = re.sub(r"```(.*?)```", r"<pre><code>\1</code></pre>", text, flags=re.DOTALL)
 
         return text
-    def HandleCodeBlocks(self, text):
-        return re.sub(r"```(.*?)```", r"<pre><code>\1</code></pre>", text, flags=re.DOTALL)
-    def HandleBlockMaths(self, text):
+    def _HTML_handle_block_maths(self, text):
         MathsBlocks = []
 
         def replacement_block(match:re.Match):
@@ -231,7 +231,7 @@ function toc_click() {
         
         text = re.sub(r"\$\$(.*?)\$\$", replacement_block, text, flags=re.DOTALL)
         return text, MathsBlocks
-    def HandleInlineMaths(self, text):
+    def _HTML_handle_inline_maths(self, text):
         InlineMaths = []
 
         def replacement_block(match:re.Match):
@@ -240,37 +240,25 @@ function toc_click() {
         
         text = re.sub(r"(?<!\$)\$(.*?)(?<!\\)\$", replacement_block, text)
         return text, InlineMaths
-        # text = re.sub(r"(?<!\$)\$(.*?)(?<!\$)\$", r"\\(\1\\)", text)
-    def HandleBoldAndItallic(self, text):
-        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
-        text = re.sub(r"\*(.*?)\*", r"<i>\1</i>", text)
-
-        return text
-    def HandleLinksAndImages(self, text):
-        text = re.sub(r"!\[\[(.*?)\]\]", rf'<br><img src="{self.imageFolderPath}\1" alt="\1"/><br>', text)
-        text = re.sub(r"(?<!\!)\[(.*?)\]\((.*?)\)", r'<a href="\2">\1</a>', text)
-
-        return text
-    def restoreBlockMaths(self, text:str, MathsBlocks):
+    def _HTML_restore_block_maths(self, text:str, MathsBlocks):
         for i in range(len(MathsBlocks)):
             maths = fr"\[{MathsBlocks[i][2:-2].strip()}\]"
             text = text.replace(f"((==MATHS_BLOCK_{i}==))", maths)
 
         return text
-    def restoreInlineMaths(self, text, InlineMaths):
+    def _HTML_restore_inline_maths(self, text, InlineMaths):
         for i in range(len(InlineMaths)):
             maths = fr"\({InlineMaths[i][1:-1].strip()}\)"
             text = text.replace(f"((==INLINE_MATHS_{i}==))", maths)
 
         return text
-
-    def GenerateTableOfContents(self):
+    def _HTML_generate_toc(self):
         # Personally I really like this code - 14/05/2025
         html = []
         stack  = [0]
 
         for level, text, id in self.Headings:
-            if level > 3:
+            if level >= 3:
                 continue
 
             # Close lists if we're going up
@@ -295,27 +283,35 @@ function toc_click() {
         return f'<div id="__toc__" class="w3-hide w3-animate-top w3-container">\n{"\n".join(html)}\n</div>'
 
 
-def _script():
+def _MarkHTML_script():
     parser = argparse.ArgumentParser()
     parser.add_argument("file_path", help="The filepath to the markdown file you would like to parse to HTML")
+    parser.add_argument("-d", "--directory", action="store_true", help="Directory mode... Will batch convert a folder instead of file.")
     parser.add_argument("-s", "--style_path", help="Specify a path to a css stylesheet to be included in the header. (If using -a, path should be from there)")
     parser.add_argument("-i", "--image_folder", help="Specify the path to a folder where images are stored")
-    parser.add_argument("-t", "--table_of_contents", action="store_true", help="Create a table of contents above the begininning of the document.")
     args = parser.parse_args()
 
-    md = None
-    if args.style_path and args.image_folder:
-        md = Markdown(args.file_path, args.image_folder, args.style_path)
-    elif args.image_folder:
-        md = Markdown(args.file_path, args.image_folder)
-    elif args.style_path:
-        md = Markdown(args.file_path, None, args.style_path)
+    paths = []
+    if args.directory:
+        allPaths = os.listdir(args.file_path)
+        [paths.append(p) for p in allPaths if p[-3:]==".md"]
     else:
-        md = Markdown(args.file_path)
+        paths.append(args.file_path)
 
-    if type(md) == Markdown:
-        html = md.GetHtml(args.table_of_contents)
-        with open(os.path.splitext(args.file_path)[0]+'.html', "w+") as f:
-            f.write(html)
-    else:
-        print("An error has occured.")
+    for path in paths:
+        md = None
+        if args.style_path and args.image_folder:
+            md = Markdown(path, args.image_folder, args.style_path)
+        elif args.image_folder:
+            md = Markdown(path, args.image_folder)
+        elif args.style_path:
+            md = Markdown(path, None, args.style_path)
+        else:
+            md = Markdown(path)
+
+        if type(md) == Markdown:
+            html = md.GetHtml()
+            with open(os.path.splitext(path)[0]+'.html', "w+") as f:
+                f.write(html)
+        else:
+            print("An error has occured.")
